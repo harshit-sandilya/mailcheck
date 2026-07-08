@@ -1,0 +1,77 @@
+name: Release
+
+on:
+    push:
+        tags:
+            - "v*"
+
+jobs:
+    build:
+        name: Build ${{ matrix.target }}
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                include:
+                    - os: ubuntu-latest
+                      target: x86_64-unknown-linux-gnu
+                      artifact: mailcheck-linux-x86_64
+                    - os: ubuntu-latest
+                      target: aarch64-unknown-linux-gnu
+                      artifact: mailcheck-linux-aarch64
+                    - os: macos-latest
+                      target: x86_64-apple-darwin
+                      artifact: mailcheck-macos-x86_64
+                    - os: macos-latest
+                      target: aarch64-apple-darwin
+                      artifact: mailcheck-macos-aarch64
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: ${{ matrix.target }}
+
+            - name: Install cross-compile deps (aarch64 linux)
+              if: matrix.target == 'aarch64-unknown-linux-gnu'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y gcc-aarch64-linux-gnu
+
+            - name: Build
+              run: cargo build --release --target ${{ matrix.target }}
+              env:
+                  CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+            - name: Rename binary
+              run: |
+                  cp target/${{ matrix.target }}/release/mailcheck ${{ matrix.artifact }}
+
+            - name: Upload artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ matrix.artifact }}
+                  path: ${{ matrix.artifact }}
+
+    release:
+        needs: build
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  merge-multiple: true
+
+            - name: SHA256 checksums
+              run: sha256sum mailcheck-* > checksums.txt
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  files: |
+                      mailcheck-linux-x86_64
+                      mailcheck-linux-aarch64
+                      mailcheck-macos-x86_64
+                      mailcheck-macos-aarch64
+                      checksums.txt

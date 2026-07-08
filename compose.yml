@@ -1,0 +1,16 @@
+services:
+    mailcheck:
+        build: .
+        container_name: mailcheck-dev
+
+        volumes:
+            - .:/workspace
+            - mailcheck_data:/root/.mailcheck
+
+        stdin_open: true
+        tty: true
+
+        command: /bin/bash
+
+volumes:
+    mailcheck_data:
