@@ -25,9 +25,13 @@ pub fn render(pattern: &str, first: &str, last: &str) -> String {
 
 /// Renders every pattern for a given name, deduplicating the result.
 pub fn candidates(patterns: &[String], first: &str, last: &str) -> Vec<String> {
-    let mut out: Vec<String> = patterns.iter().map(|p| render(p, first, last)).collect();
-    out.sort();
-    out.dedup();
+    let mut out = Vec::new();
+    for pattern in patterns {
+        let candidate = render(pattern, first, last);
+        if !out.contains(&candidate) {
+            out.push(candidate);
+        }
+    }
     out
 }
 
@@ -41,5 +45,18 @@ mod tests {
         assert_eq!(render("{f}{last}", "Jane", "Doe"), "jdoe");
         assert_eq!(render("{first}{l}", "Jane", "Doe"), "janed");
         assert_eq!(render("{f}{l}", "Jane", "Doe"), "jd");
+    }
+
+    #[test]
+    fn candidates_keep_pattern_priority_while_deduplicating() {
+        let patterns = vec![
+            "{first}.{last}".to_string(),
+            "{f}{last}".to_string(),
+            "{first}.{last}".to_string(),
+        ];
+        assert_eq!(
+            candidates(&patterns, "Jane", "Doe"),
+            vec!["jane.doe", "jdoe"]
+        );
     }
 }

@@ -1,3 +1,4 @@
+use crate::models::company::CompanyRegistry;
 use crate::models::config::Config;
 use anyhow::Result;
 
@@ -12,4 +13,14 @@ pub trait Store {
     fn add_pattern(&self, pattern: String) -> Result<()>;
     fn remove_pattern(&self, pattern: String) -> Result<()>;
     fn reset_patterns(&self) -> Result<()>;
+
+    fn load_local_companies(&self) -> Result<CompanyRegistry>;
+    fn upsert_company_pattern(
+        &self,
+        domain: String,
+        pattern: String,
+        confidence: u8,
+        samples: u32,
+    ) -> Result<()>;
+    fn reset_company(&self, domain: String) -> Result<bool>;
 }

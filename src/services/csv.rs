@@ -20,7 +20,7 @@ pub fn read_input<P: AsRef<Path>>(path: P) -> Result<Vec<InputRecord>> {
     Ok(records)
 }
 
-/// Writes results to a CSV file (domain,first_name,last_name,email,passed).
+/// Writes results to CSV, including SMTP status and company-pattern evidence.
 pub fn write_output<P: AsRef<Path>>(path: P, records: &[OutputRecord]) -> Result<()> {
     let mut writer = csv::Writer::from_path(&path)
         .with_context(|| format!("failed to create output CSV: {}", path.as_ref().display()))?;

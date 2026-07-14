@@ -1,37 +1,134 @@
 # mailcheck
 
-CLI that guesses a person's work email from first/last name + company domain, then verifies each guess via a raw SMTP handshake (MAIL FROM / RCPT TO) — it never actually sends an email, it just asks the mail server "would you accept mail for this address?" and reads the response code.
+`mailcheck` finds likely company email addresses from a domain and a person's
+first and last name. It combines company-specific pattern evidence with a raw
+SMTP recipient check. It never sends `DATA`, so it never sends an email.
+
+## How it works
+
+1. Resolve and prioritize the domain's MX servers.
+2. Perform a complete SMTP greeting and use STARTTLS when the server offers it.
+3. Probe two randomized recipients to classify the server as selective,
+   accept-all/opaque, or inconclusive.
+4. Prioritize patterns known for that company, then try the global patterns.
+5. Report SMTP status separately from pattern confidence.
+
+An accept-all response is not proof that a mailbox exists. It can represent a
+real catch-all mailbox, delayed validation, a relay, or recipient-enumeration
+protection. In that case, company pattern confidence is the useful signal.
 
 ## Build
 
-Requires Rust (install via https://rustup.rs if you don't have it):
+Requires a current Rust toolchain:
 
-```
-cd mailcheck
+```sh
 cargo build --release
 ```
 
-Binary will be at `target/release/mailcheck`.
+The binary is written to `target/release/mailcheck`.
 
-## Usage
+## Basic usage
 
+Configure a real envelope sender and a polite delay first:
+
+```sh
+mailcheck config set-email you@example.com
+mailcheck config set-delay 500
 ```
-./target/release/mailcheck --domain example.com --first Jane --last Doe
+
+Find an address:
+
+```sh
+mailcheck find example.com Jane Doe
 ```
 
-Optional flags:
+Possible result statuses are:
 
-- `--from` — the MAIL FROM address used in the handshake. Use a real address of yours (e.g. your Gmail) since some servers reject obviously fake senders.
-- `--helo` — hostname presented in EHLO. Default is fine for most cases.
-- `--timeout-secs` — per-connection timeout (default 8s).
+- `confirmed`: the server rejected randomized recipients and accepted this one.
+- `rejected`: the server rejected this recipient.
+- `opaque`: the server accepted both randomized recipients, so SMTP cannot
+  distinguish mailboxes.
+- `unverifiable`: baseline probes produced inconsistent results.
+- `unknown`: the SMTP session failed or was temporarily deferred.
 
-## Important notes
+`CONF` is the evidence confidence for a company-specific pattern. It is not a
+mailbox-delivery guarantee.
 
-- **Port 25 must be reachable.** Many home ISPs and cloud providers (AWS, GCP, most VPS) block outbound port 25 by default to fight spam. If every result comes back "unknown", this is almost certainly why. Test from a normal home or office network first. If it's blocked, options are: run it from a machine/VPS with port 25 allowed (some providers unblock it on request), or fall back to a free web-based checker for spot checks.
-- **Catch-all domains**: some company mail servers accept mail for _any_ address at that domain (so they can't be validated at SMTP level). The tool detects this by probing a near-certainly-fake address first, and marks results as "catch-all (unconfirmed)" if so — meaning the address might work but SMTP alone can't confirm it.
-- **Rate limit yourself.** Hammering a mail server with lots of RCPT TO attempts in quick succession can get your IP greylisted or blocked. Add delays between different domains if you're checking many companies, and don't run this against the same domain in a tight loop.
-- **Be a good citizen.** This is for finding a real human to send one thoughtful, personalized email to — not for building a spam list. Use it for a handful of targeted people at companies you're actually applying to.
+## Company pattern data
 
-## How the candidate list works
+Release binaries embed the reviewed community registry at
+[`data/companies.json`](data/companies.json). Each user can extend or override
+it locally:
 
-For "Jane Doe" @ example.com it tries: `jane`, `doe`, `jane.doe`, `doe.jane`, `janedoe`, `doejane`, `jdoe`, `j.doe`, `janed`, `jane.d`, `jane_doe`, `jane-doe`, `jd` — covering the vast majority of real-world corporate patterns. Easy to extend in `candidates()` in `src/main.rs` if a company uses something unusual (e.g. `jane.d@`, `d.jane@`).
+```sh
+mailcheck companies add example.com '{first}.{last}' --confidence 85 --samples 3
+mailcheck companies show example.com
+mailcheck companies list
+mailcheck companies reset example.com
+```
+
+Local data is stored in `~/.mailcheck/companies.json`. A local entry with the
+same domain and pattern overrides the embedded community entry. Reset removes
+only the local data and reveals the community data again.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute verified company patterns.
+
+## Global patterns
+
+The built-in fallbacks are:
+
+```text
+{first}          {last}           {first}.{last}
+{last}.{first}   {first}{last}    {last}{first}
+{f}{last}        {f}.{last}       {first}{l}
+{first}.{l}      {first}_{last}   {first}-{last}
+{f}{l}
+```
+
+Manage them with:
+
+```sh
+mailcheck patterns list
+mailcheck patterns add '{first}.{l}'
+mailcheck patterns remove '{first}'
+mailcheck patterns reset
+```
+
+## CSV batches
+
+Input requires a header row containing `domain,first,last`:
+
+```csv
+domain,first,last
+example.com,Jane,Doe
+```
+
+Run a batch sequentially:
+
+```sh
+mailcheck find-all people.csv
+mailcheck find-all people.csv --out results.csv
+```
+
+Output includes the candidate, SMTP status, pattern confidence/source, boolean
+compatibility field, and human-readable reason.
+
+## Operational limitations
+
+- Outbound TCP port 25 must be reachable.
+- SMTP servers can intentionally hide recipient existence; no SMTP command can
+  force an accept-all server to expose its directory.
+- A `confirmed` result means the remote SMTP server distinguished the address
+  during this check. It does not guarantee that a human reads the mailbox.
+- Probing too quickly can cause throttling or greylisting. Use a delay and keep
+  checks targeted.
+- Names with punctuation, multiple surnames, transliteration, or collision
+  suffixes may require custom patterns.
+
+## Other commands
+
+```sh
+mailcheck info
+mailcheck update
+mailcheck --help
+```

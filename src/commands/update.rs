@@ -3,7 +3,7 @@ use anyhow::Result;
 pub async fn run() -> Result<()> {
     let repo = "harshit-sandilya/mailcheck";
     let current = env!("CARGO_PKG_VERSION");
-    println!("Current version: v{}", current);
+    println!("Current version: v{current}");
     print!("Checking latest release...");
 
     let client = reqwest::Client::builder()
@@ -12,8 +12,7 @@ pub async fn run() -> Result<()> {
 
     let release: serde_json::Value = client
         .get(format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            repo
+            "https://api.github.com/repos/{repo}/releases/latest"
         ))
         .send()
         .await?
@@ -22,9 +21,9 @@ pub async fn run() -> Result<()> {
     let latest = release["tag_name"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("Could not read latest version"))?;
-    println!(" latest: {}", latest);
+    println!(" latest: {latest}");
 
-    if latest == format!("v{}", current) {
+    if latest == format!("v{current}") {
         println!("Already up to date.");
         return Ok(());
     }
@@ -35,13 +34,10 @@ pub async fn run() -> Result<()> {
         ("linux", "aarch64") => "mailcheck-linux-aarch64",
         ("macos", "x86_64") => "mailcheck-macos-x86_64",
         ("macos", "aarch64") => "mailcheck-macos-aarch64",
-        (os, arch) => anyhow::bail!("Unsupported platform: {}/{}", os, arch),
+        (os, arch) => anyhow::bail!("Unsupported platform: {os}/{arch}"),
     };
-    let url = format!(
-        "https://github.com/{}/releases/download/{}/{}",
-        repo, latest, artifact
-    );
-    println!("Downloading {}...", url);
+    let url = format!("https://github.com/{repo}/releases/download/{latest}/{artifact}");
+    println!("Downloading {url}...");
     let bytes = client.get(&url).send().await?.bytes().await?;
 
     // Write next to current binary, then replace
@@ -63,6 +59,6 @@ pub async fn run() -> Result<()> {
         );
     }
 
-    println!("Updated to {} — you're good to go.", latest);
+    println!("Updated to {latest} — you're good to go.");
     Ok(())
 }

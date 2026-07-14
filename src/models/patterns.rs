@@ -16,19 +16,41 @@ pub const BUILTIN_PATTERNS: &[&str] = &[
     "{f}{l}",
 ];
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+pub const VALID_TOKENS: [&str; 4] = ["{first}", "{last}", "{f}", "{l}"];
+
+pub fn validate_pattern(pattern: &str) -> Result<(), String> {
+    if pattern.is_empty() || pattern.contains(['\r', '\n']) {
+        return Err("pattern must be non-empty and contain no newlines".to_string());
+    }
+    let mut cursor = 0;
+    while cursor < pattern.len() {
+        let remaining = &pattern[cursor..];
+        match (remaining.find('{'), remaining.find('}')) {
+            (None, None) => break,
+            (None, Some(_)) => return Err(format!("unmatched '}}' in pattern: {pattern}")),
+            (Some(open), Some(close)) if close < open => {
+                return Err(format!("unmatched '}}' in pattern: {pattern}"));
+            }
+            (Some(open), Some(close)) => {
+                let token = &remaining[open..=close];
+                if !VALID_TOKENS.contains(&token) {
+                    return Err(format!(
+                        "unknown token '{token}' — valid tokens are {}",
+                        VALID_TOKENS.join(", ")
+                    ));
+                }
+                cursor += close + 1;
+            }
+            (Some(_), None) => return Err(format!("unmatched '{{' in pattern: {pattern}")),
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PatternOverrides {
     pub added: Vec<String>,
     pub removed: Vec<String>,
-}
-
-impl Default for PatternOverrides {
-    fn default() -> Self {
-        Self {
-            added: Vec::new(),
-            removed: Vec::new(),
-        }
-    }
 }
 
 impl PatternOverrides {
@@ -61,5 +83,19 @@ impl PatternOverrides {
     pub fn reset(&mut self) {
         self.added.clear();
         self.removed.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_tokens_and_balanced_braces() {
+        assert!(validate_pattern("{first}.{last}").is_ok());
+        assert!(validate_pattern("{unknown}.{last}").is_err());
+        assert!(validate_pattern("{first}.{last").is_err());
+        assert!(validate_pattern("{first}.last}").is_err());
+        assert!(validate_pattern("").is_err());
     }
 }

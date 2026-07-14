@@ -1,3 +1,4 @@
+pub mod companies;
 pub mod config;
 pub mod find;
 pub mod findall;

@@ -2,6 +2,7 @@ use anyhow::Result;
 use directories::UserDirs;
 use std::{fs, path::PathBuf};
 
+use crate::models::company::CompanyRegistry;
 use crate::models::config::Config;
 use crate::models::patterns::PatternOverrides;
 use crate::storage::store::Store;
@@ -9,6 +10,7 @@ use crate::storage::store::Store;
 pub struct FileStore {
     path: PathBuf,
     patterns_path: PathBuf,
+    companies_path: PathBuf,
 }
 
 impl FileStore {
@@ -31,6 +33,13 @@ impl FileStore {
         fs::write(&self.patterns_path, content)?;
         Ok(())
     }
+
+    fn save_local_companies(&self, registry: &CompanyRegistry) -> Result<()> {
+        registry.validate().map_err(anyhow::Error::msg)?;
+        let content = serde_json::to_string_pretty(registry)?;
+        fs::write(&self.companies_path, content)?;
+        Ok(())
+    }
 }
 
 impl Store for FileStore {
@@ -43,11 +52,11 @@ impl Store for FileStore {
     }
     fn get_email(&self) -> Result<String> {
         let config = self.load_config()?;
-        return Ok(config.email);
+        Ok(config.email)
     }
     fn get_delay(&self) -> Result<i64> {
         let config = self.load_config()?;
-        return Ok(config.delay);
+        Ok(config.delay)
     }
     fn set_email(&self, value: String) -> Result<()> {
         let mut config = self.load_config()?;
@@ -81,6 +90,35 @@ impl Store for FileStore {
         overrides.reset();
         self.save_patterns(&overrides)
     }
+
+    fn load_local_companies(&self) -> Result<CompanyRegistry> {
+        if !self.companies_path.exists() {
+            return Ok(CompanyRegistry::default());
+        }
+        let content = fs::read_to_string(&self.companies_path)?;
+        CompanyRegistry::from_json(&content).map_err(anyhow::Error::msg)
+    }
+
+    fn upsert_company_pattern(
+        &self,
+        domain: String,
+        pattern: String,
+        confidence: u8,
+        samples: u32,
+    ) -> Result<()> {
+        let mut registry = self.load_local_companies()?;
+        registry.upsert(domain, pattern, confidence, samples);
+        self.save_local_companies(&registry)
+    }
+
+    fn reset_company(&self, domain: String) -> Result<bool> {
+        let mut registry = self.load_local_companies()?;
+        let removed = registry.reset_domain(&domain);
+        if removed {
+            self.save_local_companies(&registry)?;
+        }
+        Ok(removed)
+    }
 }
 
 impl Default for FileStore {
@@ -94,6 +132,7 @@ impl Default for FileStore {
         std::fs::create_dir_all(&config_dir).expect("unable to create config directory");
         let config_path = config_dir.join("config.json");
         let patterns_path = config_dir.join("patterns.json");
+        let companies_path = config_dir.join("companies.json");
 
         if !config_path.exists() {
             let config = crate::models::config::Config::default();
@@ -103,7 +142,8 @@ impl Default for FileStore {
 
         Self {
             path: config_path,
-            patterns_path: patterns_path,
+            patterns_path,
+            companies_path,
         }
     }
 }

@@ -13,6 +13,9 @@ pub struct OutputRecord {
     pub first_name: String,
     pub last_name: String,
     pub email: String,
+    pub confidence: Option<u8>,
+    pub pattern_source: String,
+    pub status: String,
     pub passed: bool,
     pub reason: String,
 }

@@ -2,14 +2,16 @@ use anyhow::Result;
 use colored::*;
 
 use crate::app::context::AppContext;
+use crate::models::company::{normalize_domain, validate_domain};
 use crate::models::record::OutputRecord;
-use crate::services::{csv, smtp::SmtpService};
+use crate::services::{company, csv, smtp::SmtpService};
 use crate::storage::store::Store;
 
 pub async fn run(ctx: &AppContext, csv_path: String, out: Option<String>) -> Result<()> {
     let email = ctx.store.get_email()?;
     let delay = ctx.store.get_delay()?;
     let patterns = ctx.store.get_patterns()?;
+    let local_companies = ctx.store.load_local_companies()?;
 
     if patterns.is_empty() {
         eprintln!(
@@ -30,6 +32,14 @@ pub async fn run(ctx: &AppContext, csv_path: String, out: Option<String>) -> Res
     let mut all_results: Vec<OutputRecord> = Vec::new();
     let total = input.len();
     for (i, row) in input.iter().enumerate() {
+        if let Err(error) = validate_domain(&row.domain) {
+            eprintln!(
+                "{}",
+                format!("[{}/{}] skipping {}: {error}", i + 1, total, row.domain).yellow()
+            );
+            continue;
+        }
+        let domain = normalize_domain(&row.domain);
         eprintln!(
             "{}",
             format!(
@@ -38,13 +48,16 @@ pub async fn run(ctx: &AppContext, csv_path: String, out: Option<String>) -> Res
                 total,
                 row.first,
                 row.last,
-                row.domain
+                domain
             )
             .dimmed()
         );
-        let results = smtp
-            .check_all(&row.domain, &row.first, &row.last, &patterns)
+        let ranked = company::ranked_patterns(&domain, &local_companies)?;
+        let effective_patterns = company::merge_with_fallbacks(&ranked, &patterns);
+        let mut results = smtp
+            .check_all(&domain, &row.first, &row.last, &effective_patterns)
             .await?;
+        company::annotate_results(&mut results, &ranked, &row.first, &row.last);
         all_results.extend(results);
     }
 
@@ -66,29 +79,35 @@ pub async fn run(ctx: &AppContext, csv_path: String, out: Option<String>) -> Res
 
 fn print_table(results: &[OutputRecord]) {
     println!(
-        "{:<10} {:<12} {:<12} {:<32} {:<6} {}",
+        "{:<10} {:<12} {:<12} {:<32} {:<14} {:<7} {}",
         "DOMAIN".bold(),
         "FIRST".bold(),
         "LAST".bold(),
         "EMAIL".bold(),
-        "PASS".bold(),
+        "STATUS".bold(),
+        "CONF".bold(),
         "REASON".bold()
     );
-    println!("{}", "-".repeat(100));
+    println!("{}", "-".repeat(112));
 
     for r in results {
-        let (mark, label) = if r.passed {
-            ("✔".green().to_string(), "pass".green().to_string())
-        } else {
-            ("✘".red().to_string(), "fail".red().to_string())
+        let (mark, label) = match r.status.as_str() {
+            "confirmed" => ("✔".green().to_string(), r.status.green().to_string()),
+            "rejected" => ("✘".red().to_string(), r.status.red().to_string()),
+            _ => ("?".yellow().to_string(), r.status.yellow().to_string()),
         };
+        let confidence = r
+            .confidence
+            .map(|value| format!("{value}%"))
+            .unwrap_or_else(|| "-".to_string());
         println!(
-            "{:<10} {:<12} {:<12} {:<32} {mark} {:<4} {}",
+            "{:<10} {:<12} {:<12} {:<32} {mark} {:<12} {:<7} {}",
             r.domain,
             r.first_name,
             r.last_name,
             r.email,
             label,
+            confidence,
             r.reason.dimmed()
         );
     }
