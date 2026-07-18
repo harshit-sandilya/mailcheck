@@ -1,10 +1,13 @@
 use anyhow::Result;
+use sha2::{Digest, Sha256};
+use std::io::{self, Write};
 
 pub async fn run() -> Result<()> {
     let repo = "harshit-sandilya/mailcheck";
     let current = env!("CARGO_PKG_VERSION");
     println!("Current version: v{current}");
     print!("Checking latest release...");
+    io::stdout().flush()?;
 
     let client = reqwest::Client::builder()
         .user_agent("mailcheck-updater")
@@ -16,6 +19,7 @@ pub async fn run() -> Result<()> {
         ))
         .send()
         .await?
+        .error_for_status()?
         .json()
         .await?;
     let latest = release["tag_name"]
@@ -38,7 +42,36 @@ pub async fn run() -> Result<()> {
     };
     let url = format!("https://github.com/{repo}/releases/download/{latest}/{artifact}");
     println!("Downloading {url}...");
-    let bytes = client.get(&url).send().await?.bytes().await?;
+    let bytes = client
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+
+    let checksums_url =
+        format!("https://github.com/{repo}/releases/download/{latest}/checksums.txt");
+    let checksums = client
+        .get(checksums_url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let expected = checksums
+        .lines()
+        .find_map(|line| {
+            let mut fields = line.split_whitespace();
+            let hash = fields.next()?;
+            let name = fields.next()?;
+            (name == artifact).then_some(hash)
+        })
+        .ok_or_else(|| anyhow::anyhow!("Release checksum missing for {artifact}"))?;
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if !actual.eq_ignore_ascii_case(expected) {
+        anyhow::bail!("Checksum verification failed for {artifact}");
+    }
 
     // Write next to current binary, then replace
     let current_exe = std::env::current_exe()?;

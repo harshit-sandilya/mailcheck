@@ -2,8 +2,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, bail};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::rdata::MX;
 use hickory_resolver::{Resolver, TokioResolver};
+use hickory_resolver::{config::GOOGLE, config::ResolverConfig};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
@@ -83,7 +85,19 @@ impl SmtpService {
             bail!("MAIL FROM address contains a newline");
         }
 
-        let resolver = Resolver::builder_tokio()?.build()?;
+        // macOS can expose scoped link-local DNS servers such as
+        // `fe80::1%en0`. Hickory's system-config parser currently treats the
+        // scope suffix as part of an IpAddr and rejects the whole resolver
+        // configuration. Match reqwest's Hickory integration by falling back
+        // to a known public resolver when system configuration is unusable.
+        let resolver = match Resolver::builder_tokio() {
+            Ok(builder) => builder.build()?,
+            Err(_) => Resolver::builder_with_config(
+                ResolverConfig::udp_and_tcp(&GOOGLE),
+                TokioRuntimeProvider::default(),
+            )
+            .build()?,
+        };
         let native_certs = rustls_native_certs::load_native_certs();
         let mut roots = RootCertStore::empty();
         let (added, _) = roots.add_parsable_certificates(native_certs.certs);

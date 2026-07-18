@@ -2,6 +2,9 @@
 set -e
 
 REPO="harshit-sandilya/mailcheck"
+TMP_BIN=$(mktemp "${TMPDIR:-/tmp}/mailcheck.XXXXXX")
+TMP_CHECKSUMS=$(mktemp "${TMPDIR:-/tmp}/mailcheck-checksums.XXXXXX")
+trap 'rm -f "$TMP_BIN" "$TMP_CHECKSUMS"' EXIT HUP INT TERM
 
 # Detect OS + arch
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -32,20 +35,49 @@ BIN_DIR="${MAILCHECK_BIN_DIR:-$DEFAULT_BIN_DIR}"
 # Get latest release tag
 VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
   | grep '"tag_name"' | cut -d'"' -f4)
+if [ -z "$VERSION" ]; then
+  echo "Unable to determine the latest mailcheck release." >&2
+  exit 1
+fi
 
 ARTIFACT="mailcheck-${OS}-${ARCH}"
 URL="https://github.com/$REPO/releases/download/$VERSION/$ARTIFACT"
+CHECKSUMS_URL="https://github.com/$REPO/releases/download/$VERSION/checksums.txt"
 
 echo "Installing mailcheck $VERSION ($OS/$ARCH)..."
 mkdir -p "$BIN_DIR"
-curl -fsSL "$URL" -o /tmp/mailcheck
-chmod +x /tmp/mailcheck
+curl -fsSL "$URL" -o "$TMP_BIN"
+curl -fsSL "$CHECKSUMS_URL" -o "$TMP_CHECKSUMS"
+
+EXPECTED=$(awk -v artifact="$ARTIFACT" '$2 == artifact { print $1 }' "$TMP_CHECKSUMS")
+if [ -z "$EXPECTED" ]; then
+  echo "Release checksum missing for $ARTIFACT." >&2
+  exit 1
+fi
+
+if command -v shasum >/dev/null 2>&1; then
+  ACTUAL=$(shasum -a 256 "$TMP_BIN" | awk '{ print $1 }')
+elif command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL=$(sha256sum "$TMP_BIN" | awk '{ print $1 }')
+else
+  echo "A SHA-256 utility (shasum or sha256sum) is required." >&2
+  exit 1
+fi
+
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "Checksum verification failed for $ARTIFACT." >&2
+  exit 1
+fi
+
+chmod +x "$TMP_BIN"
 
 if [ -w "$BIN_DIR" ]; then
-  mv /tmp/mailcheck "$BIN_DIR/mailcheck"
+  mv "$TMP_BIN" "$BIN_DIR/mailcheck"
 else
-  sudo mv /tmp/mailcheck "$BIN_DIR/mailcheck"
+  sudo mv "$TMP_BIN" "$BIN_DIR/mailcheck"
 fi
+
+"$BIN_DIR/mailcheck" --version
 
 echo ""
 echo "mailcheck $VERSION installed to $BIN_DIR/mailcheck"
